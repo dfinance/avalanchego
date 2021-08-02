@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package dfinance.dvm;
+
+import "dfinance/dvm/common-types.proto";
+
+option go_package = "github.com/ava-labs/avalanchego/vms/mvm/dvm/";
+
+message DSAccessPath {
+  bytes address = 1; // AccountAddress
+  bytes path = 2;
+}
+
+enum ErrorCode {
+  NONE = 0;  // no error
+  BAD_REQUEST = 1;  // crash of compilation, logs will show stacktrace
+  NO_DATA = 2;  // no such module
+}
+
+message DSRawResponse {
+  bytes blob = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;  // error message from libra, empty if ErrorCode::None
+}
+
+
+message DSAccessPaths {
+  repeated DSAccessPath paths = 1;
+}
+
+message DSRawResponses {
+  repeated bytes blobs = 1;
+}
+
+message OraclePriceRequest {
+  string currency_1 = 1;
+  string currency_2 = 2;
+}
+
+message OraclePriceResponse {
+  dvm.u128 price = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;  // error message from libra, empty if ErrorCode::None
+}
+
+message NativeBalanceRequest {
+  bytes address = 1;
+  string ticker = 2;
+}
+
+message NativeBalanceResponse {
+  dvm.u128 balance = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;  // error message from libra, empty if ErrorCode::None
+}
+
+message CurrencyInfoRequest {
+  string ticker = 2;
+}
+
+message CurrencyInfo {
+  bytes denom = 1;
+  uint32 decimals = 2;
+  bool is_token = 3;
+  bytes address = 4;
+  dvm.u128 total_supply = 5;
+}
+
+message CurrencyInfoResponse {
+  CurrencyInfo info = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;  // error message from libra, empty if ErrorCode::None
+}
+
+// GRPC service
+service DSService {
+  rpc GetRaw (DSAccessPath) returns (DSRawResponse) {}
+  rpc MultiGetRaw (DSAccessPaths) returns (DSRawResponses) {}
+  rpc GetOraclePrice (OraclePriceRequest) returns (OraclePriceResponse) {}
+  rpc GetNativeBalance (NativeBalanceRequest) returns (NativeBalanceResponse) {}
+  rpc GetCurrencyInfo (CurrencyInfoRequest) returns (CurrencyInfoResponse) {}
+}
