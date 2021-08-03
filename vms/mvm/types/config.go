@@ -47,13 +47,13 @@ func NewDefaultConfig() Config {
 
 // NewConfig returns a valid Config from the serialized data or the default one.
 func NewConfig(configBz []byte) (Config, error) {
-	var config Config
 	if len(configBz) == 0 {
-		config = NewDefaultConfig()
-	} else {
-		if err := json.Unmarshal(configBz, &config); err != nil {
-			return Config{}, fmt.Errorf("unmarshal JSON: %w", err)
-		}
+		return Config{}, fmt.Errorf("empty config")
+	}
+
+	var config Config
+	if err := json.Unmarshal(configBz, &config); err != nil {
+		return Config{}, fmt.Errorf("unmarshal JSON: %w", err)
 	}
 
 	if err := config.Validate(); err != nil {

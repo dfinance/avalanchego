@@ -14,22 +14,22 @@ type Tx interface {
 type (
 	// TxExecuteScript defines a Tx message to execute a script with args using DVM.
 	TxExecuteScript struct {
-		Signer string      `json:"signer"` // Tx sender address
-		Script []byte      `json:"script"` // Script source code
-		Args   []ScriptArg `json:"args"`   // Script arguments
+		Signer string      `serialize:"true"` // Tx sender address
+		Script []byte      `serialize:"true"` // Script source code
+		Args   []ScriptArg `serialize:"true"` // Script arguments
 	}
 
 	ScriptArg struct {
-		Type  dvm.VMTypeTag `json:"type"`
-		Value []byte        `json:"value"`
+		Type  dvm.VMTypeTag `serialize:"true"`
+		Value []byte        `serialize:"true"`
 	}
 )
 
 type (
 	// TxDeployModule defines a Tx message to deploy a module (contract) using DVM.
 	TxDeployModule struct {
-		Signer  string   `json:"signer"`  // Tx sender address
-		Modules [][]byte `json:"modules"` // Modules source code
+		Signer  string   `serialize:"true"` // Tx sender address
+		Modules [][]byte `serialize:"true"` // Modules source code
 	}
 )
 

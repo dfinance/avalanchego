@@ -30,12 +30,12 @@ func (vm *VM) Initialize(
 	}
 
 	linerCodec := linearcodec.NewDefault()
-	if err := linerCodec.RegisterType(&types.TxDeployModule{}); err != nil {
-		ctx.Log.Error("Registering %T codec type: %v", &types.TxDeployModule{}, err)
+	if err := linerCodec.RegisterType(types.TxDeployModule{}); err != nil {
+		ctx.Log.Error("Registering %T codec type: %v", types.TxDeployModule{}, err)
 		return err
 	}
-	if err := linerCodec.RegisterType(&types.TxExecuteScript{}); err != nil {
-		ctx.Log.Error("Registering %T codec type: %v", &types.TxExecuteScript{}, err)
+	if err := linerCodec.RegisterType(types.TxExecuteScript{}); err != nil {
+		ctx.Log.Error("Registering %T codec type: %v", types.TxExecuteScript{}, err)
 		return err
 	}
 	codecManager := codec.NewDefaultManager()
@@ -65,13 +65,11 @@ func (vm *VM) Initialize(
 	vm.state = internalState
 
 	if genesisBlockInitialized {
+		ctx.Log.Info("Creating genesis block")
+
 		block, err := vm.NewBlock(ids.Empty, 0, nil)
 		if err != nil {
 			ctx.Log.Error("creating genesis block: %v", err)
-			return err
-		}
-		if err := block.Accept(); err != nil {
-			ctx.Log.Error("accepting genesis block: %v", err)
 			return err
 		}
 
@@ -80,8 +78,23 @@ func (vm *VM) Initialize(
 			return err
 		}
 
+		if err := block.Accept(); err != nil {
+			ctx.Log.Error("accepting genesis block: %v", err)
+			return err
+		}
+
+		if err := vm.SetDBInitialized(); err != nil {
+			ctx.Log.Error("setting DB initialized: %v", err)
+			return err
+		}
+
 		if err := vm.DB.Commit(); err != nil {
 			ctx.Log.Error("committing genesis block: %v", err)
+			return err
+		}
+
+		if err := vm.SetPreference(vm.LastAcceptedID); err != nil {
+			ctx.Log.Error("setting LastAcceptedID: %v", err)
 			return err
 		}
 	}

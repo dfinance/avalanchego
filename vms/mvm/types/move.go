@@ -1,9 +1,6 @@
 package types
 
 import (
-	"encoding/hex"
-	"fmt"
-
 	"github.com/ava-labs/avalanchego/vms/mvm/dvm"
 )
 
@@ -17,9 +14,19 @@ const (
 	DVMGasLimit = ^uint64(0)/1000 - 1
 )
 
+// DVM Event to Event conversion params.
+const (
+	// EventTypeProcessingGas is the initial gas for processing event type.
+	EventTypeProcessingGas = 10000
+	// EventTypeNoGasLevels defines number of nesting levels that do not charge gas.
+	EventTypeNoGasLevels = 2
+)
+
 var (
 	// DVMStdLibAddress is the Move stdlib addresses.
 	DVMStdLibAddress = make([]byte, DVMAddressLength)
+
+	DVMStdLibAddressShortStr = "0x1"
 )
 
 type (
@@ -73,25 +80,6 @@ func NewVMExecuteScriptRequest(signerAddrRaw string, code []byte, blockHeight ui
 		TypeParams:   nil,
 		Args:         vmArgs,
 	}
-}
-
-// StringifyVMAccessPath returns dvm.VMAccessPath string representation.
-func StringifyVMAccessPath(path *dvm.VMAccessPath) string {
-	if path == nil {
-		return ""
-	}
-
-	return fmt.Sprintf("%s:%s", hex.EncodeToString(path.Address), hex.EncodeToString(path.Path))
-}
-
-// StringifyDVMTypeTag returns dvm.VMTypeTag string representation.
-func StringifyDVMTypeTag(tag dvm.VMTypeTag) (string, error) {
-	val, ok := dvm.VMTypeTag_name[int32(tag)]
-	if !ok {
-		return "", fmt.Errorf("can't find string representation of VMTypeTag %d, check correctness of type value", tag)
-	}
-
-	return val, nil
 }
 
 func init() {

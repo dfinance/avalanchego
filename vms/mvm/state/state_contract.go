@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -11,41 +12,50 @@ import (
 )
 
 // ExecuteContract executes Move script and processes execution results (events, writeSets).
-func (s *State) ExecuteContract(msg types.TxExecuteScript, blockHeight uint64) error {
+func (s *State) ExecuteContract(msg types.TxExecuteScript, blockHeight uint64) (types.Events, error) {
+	s.log.Info("Execute contract")
+
 	req := types.NewVMExecuteScriptRequest(msg.Signer, msg.Script, blockHeight, msg.Args...)
 
 	exec, err := s.dvmClient.SendExecuteReq(nil, req)
 	if err != nil {
-		return fmt.Errorf("gRPC error: %w", err)
+		return nil, fmt.Errorf("gRPC error: %w", err)
 	}
 
-	if err := s.processDVMExecution(exec); err != nil {
-		return fmt.Errorf("processing execution: %w", err)
-	}
-
-	return nil
+	return s.processDVMExecution(exec)
 }
 
 // DeployContract deploys Move module (contract) and processes execution results (events, writeSets).
-func (s *State) DeployContract(msg types.TxDeployModule) error {
+func (s *State) DeployContract(msg types.TxDeployModule) (types.Events, error) {
+	s.log.Info("Deploy contract")
+
 	execList := make([]*dvm.VMExecuteResponse, 0, len(msg.Modules))
 	for i, code := range msg.Modules {
 		req := types.NewVMPublishModuleRequests(msg.Signer, code)
 
 		exec, err := s.dvmClient.SendExecuteReq(req, nil)
 		if err != nil {
-			return fmt.Errorf("contract [%d]: gRPC error: %w", i, err)
+			return nil, fmt.Errorf("contract [%d]: gRPC error: %w", i, err)
 		}
 		execList = append(execList, exec)
 	}
 
+	var retEvents types.Events
+	var errList []string
 	for i, exec := range execList {
-		if err := s.processDVMExecution(exec); err != nil {
-			return fmt.Errorf("processing execution [%d]: %w", i, err)
+		events, err := s.processDVMExecution(exec)
+		if err != nil {
+			errList = append(errList, fmt.Sprintf("execution [%d]: %v", i, err))
 		}
+		retEvents = append(retEvents, events...)
 	}
 
-	return nil
+	var retErr error
+	if len(errList) > 0 {
+		retErr = fmt.Errorf("%s", strings.Join(errList, ", "))
+	}
+
+	return retEvents, retErr
 }
 
 func (s *State) GetMetadata(code []byte) (*types.Metadata, error) {
@@ -126,15 +136,32 @@ func (s *State) Compile(senderAddress, code []byte) ([]types.CompiledItem, error
 }
 
 // processDVMExecution processes DVM execution result: eupdates writeSets.
-func (s *State) processDVMExecution(exec *dvm.VMExecuteResponse) error {
+func (s *State) processDVMExecution(exec *dvm.VMExecuteResponse) (types.Events, error) {
+	// Build events with infinite (almost) gasMeter
+	events, err := types.NewContractEvents(exec)
+	if err != nil {
+		return nil, err
+	}
+
+	gasMeter := types.NewGasMeter(math.MaxUint64)
+	for _, vmEvent := range exec.Events {
+		event, err := types.NewMoveEvent(gasMeter, vmEvent)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+
 	// Process success status
 	if exec.GetStatus().GetError() == nil {
 		if err := s.processDVMWriteSet(exec.WriteSet); err != nil {
-			return fmt.Errorf("processing writeSets: %w", err)
+			return events, fmt.Errorf("processing writeSets: %w", err)
 		}
+
+		return events, nil
 	}
 
-	return nil
+	return events, fmt.Errorf("execution failed (refer to events for details)")
 }
 
 // processDVMWriteSet processes VM execution writeSets (set/delete).

@@ -49,6 +49,12 @@ type (
 	ExecuteResponse struct{}
 )
 
+type ExecutionResponse struct {
+	Executed bool         `json:"executed"`
+	Message  string       `json:"message,omitempty"`
+	Events   types.Events `json:"events,omitempty"`
+}
+
 func (s *Service) Compile(_ *http.Request, args *CompileRequest, reply *CompileResponse) error {
 	resp, err := s.vm.state.Compile([]byte(args.SenderAddress), []byte(args.MoveCode))
 	if err != nil {
