@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package dfinance.dvm;
 
-option go_package = "github.com/ava-labs/avalanchego/vms/mvm/dvm/";
+option go_package = "mvm/dvm/";
 
 // Compilation unit.
 message CompilationUnit {

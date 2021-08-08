@@ -3,46 +3,13 @@ package types
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
-)
 
-// DVM connection and retry policy defaults.
-const (
-	DefaultDVMAddress        = "tcp://127.0.0.1:50051"
-	DefaultDataServerAddress = "tcp://127.0.0.1:50061"
-	DefaultMaxAttempts       = 0
-	DefaultReqTimeout        = 0
+	stateTypes "github.com/ava-labs/avalanchego/vms/mvm/state/types"
 )
 
 // Config defines VM configuration.
-type (
-	Config struct {
-		DVMConnection DVMConnection `json:"dvm_connection"`
-	}
-
-	DVMConnection struct {
-		// DVM virtual machine address to connect to.
-		DVMAddress string `json:"dvm_address"`
-		// Node's data server address to listen for connections from DVM.
-		DataServerAddress string `json:"data_server_address"`
-
-		// Retry policy: maximum retry attempts (0 - infinity)
-		MaxAttempts uint `json:"max_attempts"`
-		// Retry policy: request timeout per attempt [ms] (0 - infinite, no timeout)
-		ReqTimeoutInMs uint `json:"req_timeout_in_ms"`
-	}
-)
-
-// NewDefaultConfig creates a default Config.
-func NewDefaultConfig() Config {
-	return Config{
-		DVMConnection: DVMConnection{
-			DVMAddress:        DefaultDVMAddress,
-			DataServerAddress: DefaultDataServerAddress,
-			MaxAttempts:       DefaultMaxAttempts,
-			ReqTimeoutInMs:    DefaultReqTimeout,
-		},
-	}
+type Config struct {
+	DVMConnection stateTypes.DVMConnectionConfig `json:"dvm_connection"`
 }
 
 // NewConfig returns a valid Config from the serialized data or the default one.
@@ -65,12 +32,8 @@ func NewConfig(configBz []byte) (Config, error) {
 
 // Validate validates Config.
 func (c Config) Validate() error {
-	if _, err := url.Parse(c.DVMConnection.DVMAddress); err != nil {
-		return fmt.Errorf("dvm_connection: dvm_address: invalid URL: %w", err)
-	}
-
-	if _, err := url.Parse(c.DVMConnection.DataServerAddress); err != nil {
-		return fmt.Errorf("dvm_connection: data_server_address: invalid URL: %w", err)
+	if err := c.DVMConnection.Validate(); err != nil {
+		return fmt.Errorf("dvm_connection: %w", err)
 	}
 
 	return nil

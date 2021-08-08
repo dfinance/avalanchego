@@ -4,7 +4,7 @@ package dfinance.dvm;
 
 import "dfinance/dvm/common-types.proto";
 
-option go_package = "github.com/ava-labs/avalanchego/vms/mvm/dvm/";
+option go_package = "mvm/dvm/";
 
 // Bytecode.
 message Bytecode {

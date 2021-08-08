@@ -11,7 +11,7 @@ import (
 const (
 	EventTypeContractStatus = "contract_status"
 	EventTypeMoveEvent      = "contract_events"
-	//
+
 	AttributeStatus             = "status"
 	AttributeErrMajorStatus     = "major_status"
 	AttributeErrSubStatus       = "sub_status"
@@ -22,41 +22,13 @@ const (
 	AttributeVmEventSource      = "source"
 	AttributeVmEventType        = "type"
 	AttributeVmEventData        = "data"
-	//
+
 	AttributeValueStatusKeep      = "keep"
 	AttributeValueStatusDiscard   = "discard"
 	AttributeValueStatusError     = "error"
 	AttributeValueSourceScript    = "script"
 	AttributeValueSourceModuleFmt = "%s::%s"
 )
-
-type (
-	Event struct {
-		Type       string           `json:"type"`
-		Attributes []EventAttribute `json:"attributes"`
-	}
-
-	EventAttribute struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-	}
-
-	Events []Event
-)
-
-func NewEvent(eventType string, eventAttributes ...EventAttribute) Event {
-	return Event{
-		Type:       eventType,
-		Attributes: eventAttributes,
-	}
-}
-
-func NewEventAttribute(attrKey, attrValue string) EventAttribute {
-	return EventAttribute{
-		Key:   attrKey,
-		Value: attrValue,
-	}
-}
 
 // NewContractEvents creates Events on successful / failed VM execution.
 // "keep" status emits two events, "discard" status emits one event.

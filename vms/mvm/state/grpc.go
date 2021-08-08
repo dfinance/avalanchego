@@ -72,8 +72,8 @@ func GetGRpcClientConnection(addr string, keepAlivePeriod time.Duration) (*grpc.
 	return grpc.Dial(dialAddress, dialOptions...)
 }
 
+// parseGRpcAddress parses gRPC address.
 func parseGRpcAddress(addr string) (retSchema, retAddress string, retErr error) {
-	// Handling default VM config for previous version
 	if !strings.Contains(addr, "://") {
 		addr = "tcp://" + addr
 	}

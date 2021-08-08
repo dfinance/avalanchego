@@ -5,7 +5,7 @@ package dfinance.dvm;
 import "dfinance/dvm/common-types.proto";
 import "dfinance/dvm/compiler.proto";
 
-option go_package = "github.com/ava-labs/avalanchego/vms/mvm/dvm/";
+option go_package = "mvm/dvm/";
 
 // An `AbortLocation` specifies where a Move program `abort` occurred, either in a function in
 // a module, or in a script.

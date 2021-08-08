@@ -8,8 +8,8 @@ import (
 	"github.com/ava-labs/avalanchego/vms/mvm/dvm"
 )
 
-// GenesisState defines VM genesis state.
 type (
+	// GenesisState defines genesis state.
 	GenesisState struct {
 		WriteSets []WriteSet `json:"write_set"`
 	}

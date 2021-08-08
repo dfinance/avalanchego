@@ -1,62 +1,105 @@
 package mvm
 
 import (
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/OneOfOne/xxhash"
-	"github.com/ava-labs/avalanchego/vms/mvm/dvm"
-	"github.com/ava-labs/avalanchego/vms/mvm/types"
+	"github.com/ava-labs/avalanchego/api"
+	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/formatting"
+	stateTypes "github.com/ava-labs/avalanchego/vms/mvm/state/types"
 )
 
+var (
+	ErrInvalidInput = errors.New("invalid input")
+)
+
+// Service provides VM's REST API handlers.
 type Service struct {
 	vm *VM
 }
 
 type (
 	CompileRequest struct {
-		SenderAddress string `json:"sender_address"`
-		MoveCode      string `json:"move_code"`
+		api.UserPass
+
+		MoveCode string `json:"moveCode"`
 	}
 
 	CompileResponse struct {
-		CompiledItems []types.CompiledItem `json:"compiled_items"`
+		CompiledItems stateTypes.CompiledItems `json:"compiledItems"`
 	}
 )
 
 type (
 	DeployRequest struct {
-		SenderAddress   string `json:"sender_address"`
-		CompiledContent string `json:"compiled_content"`
-	}
+		api.UserPass
 
-	DeployResponse struct{}
+		CompiledContent string `json:"compiledContent"`
+	}
 )
 
 type (
 	ExecuteRequest struct {
-		SenderAddress   string   `json:"sender_address"`
-		CompiledContent string   `json:"compiled_content"`
+		api.UserPass
+
+		CompiledContent string   `json:"compiledContent"`
 		Args            []string `json:"args"`
 	}
+)
 
-	ExecuteResponse struct{}
+type (
+	ImportKeyArgs struct {
+		api.UserPass
+
+		PrivateKey string `json:"privateKey"`
+	}
+)
+
+type (
+	AddressListResponse struct {
+		Addresses []AddressResponse `json:"addresses"`
+	}
+
+	AddressResponse struct {
+		CB58  string `json:"cb58_format"`
+		Local string `json:"local_format"`
+		Hex   string `json:"hex_format"`
+	}
 )
 
 type ExecutionResponse struct {
-	Executed bool         `json:"executed"`
-	Message  string       `json:"message,omitempty"`
-	Events   types.Events `json:"events,omitempty"`
+	Executed bool              `json:"executed"`
+	Message  string            `json:"message,omitempty"`
+	Events   stateTypes.Events `json:"events,omitempty"`
 }
 
+// Compile compiles Move code and returns byte code with DVM meta.
 func (s *Service) Compile(_ *http.Request, args *CompileRequest, reply *CompileResponse) error {
-	resp, err := s.vm.state.Compile([]byte(args.SenderAddress), []byte(args.MoveCode))
+	s.vm.Ctx.Log.Debug("MVM: Compile called")
+	if err := s.checkInitialized(); err != nil {
+		return err
+	}
+
+	address, _, err := s.getUserCreds(args.UserPass)
+	if err != nil {
+		return err
+	}
+
+	msg, err := stateTypes.NewMsgBuilder().
+		Compile(address, args.MoveCode).
+		Build()
+	if err != nil {
+		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
+	}
+
+	resp, err := s.vm.state.Compile(msg.(*stateTypes.MsgCompile))
 	if err != nil {
 		return err
 	}
@@ -66,279 +109,207 @@ func (s *Service) Compile(_ *http.Request, args *CompileRequest, reply *CompileR
 	return nil
 }
 
-func (s *Service) Deploy(_ *http.Request, args *DeployRequest, reply *DeployResponse) error {
-	compItems, err := s.parseCompiledContent(args.CompiledContent, true)
+// Deploy issues contract deploy Tx.
+func (s *Service) Deploy(_ *http.Request, args *DeployRequest, reply *api.JSONTxID) error {
+	s.vm.Ctx.Log.Debug("MVM: Deploy called")
+	if err := s.checkInitialized(); err != nil {
+		return err
+	}
+
+	address, privKeys, err := s.getUserCreds(args.UserPass)
 	if err != nil {
-		return fmt.Errorf("compiled_content: %v: %w", err, types.ErrInvalidInput)
+		return err
 	}
 
-	contractsCode := make([][]byte, 0, len(compItems.CompiledItems))
-	for _, item := range compItems.CompiledItems {
-		contractsCode = append(contractsCode, item.ByteCode)
-	}
-	tx := types.TxDeployModule{
-		Signer:  args.SenderAddress,
-		Modules: contractsCode,
+	compItems, err := s.parseCompiledContent(args.CompiledContent)
+	if err != nil {
+		return err
 	}
 
-	s.vm.proposeBlock([]types.Tx{tx})
+	msg, err := stateTypes.NewMsgBuilder().
+		DeployModule(address, compItems).
+		Build()
+	if err != nil {
+		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
+	}
+
+	tx, err := s.vm.newMoveTx(msg, privKeys)
+	if err != nil {
+		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
+	}
+
+	s.vm.issueTx(tx)
 
 	return nil
 }
 
-func (s *Service) Execute(_ *http.Request, args *ExecuteRequest, reply *ExecuteResponse) error {
-	compItems, err := s.parseCompiledContent(args.CompiledContent, true)
-	if err != nil {
-		return fmt.Errorf("compiled_content: %v: %w", err, types.ErrInvalidInput)
+// Execute issues contract execute Tx.
+func (s *Service) Execute(_ *http.Request, args *ExecuteRequest, reply *api.JSONTxID) error {
+	s.vm.Ctx.Log.Debug("MVM: Execute called")
+	if err := s.checkInitialized(); err != nil {
+		return err
 	}
 
-	meta, err := s.vm.state.GetMetadata(compItems.CompiledItems[0].ByteCode)
+	address, privKeys, err := s.getUserCreds(args.UserPass)
 	if err != nil {
-		return fmt.Errorf("extracting script arguments meta: %w", err)
-	}
-	if meta.Metadata.GetScript() == nil {
-		return fmt.Errorf("extracting script arguments meta: requested byteCode is not a script")
-	}
-	typedArgs := meta.Metadata.GetScript().Arguments
-
-	// Build msg
-	scriptArgs, err := s.convertScriptArgs(args.Args, typedArgs)
-	if err != nil {
-		return fmt.Errorf("converting input args to typed args: %w", err)
-	}
-	tx := types.TxExecuteScript{
-		Signer: args.SenderAddress,
-		Script: compItems.CompiledItems[0].ByteCode,
-		Args:   scriptArgs,
+		return err
 	}
 
-	s.vm.proposeBlock([]types.Tx{tx})
+	compItems, err := s.parseCompiledContent(args.CompiledContent)
+	if err != nil {
+		return err
+	}
+
+	msg, err := stateTypes.NewMsgBuilder().
+		WithMetadataGetter(s.vm.state.GetMetadata).
+		WithAddressParser(s.vm.ParseLocalAddress).
+		ExecuteScript(address, compItems, args.Args...).
+		Build()
+	if err != nil {
+		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
+	}
+
+	tx, err := s.vm.newMoveTx(msg, privKeys)
+	if err != nil {
+		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
+	}
+
+	s.vm.issueTx(tx)
 
 	return nil
 }
 
-func (s *Service) parseCompiledContent(content string, oneItem bool) (*CompileResponse, error) {
-	compItems := CompileResponse{}
-	if err := json.Unmarshal([]byte(content), &compItems); err != nil {
-		return nil, fmt.Errorf("content JSON unmarshal: %w", err)
+// ImportKey imports user private key, creating address.
+func (s *Service) ImportKey(_ *http.Request, args *ImportKeyArgs, reply *api.JSONAddress) error {
+	s.vm.Ctx.Log.Debug("MVM: ImportKey called for user %s", args.Username)
+	if err := s.checkInitialized(); err != nil {
+		return err
 	}
 
-	if len(compItems.CompiledItems) == 0 || (oneItem && len(compItems.CompiledItems) != 1) {
-		return nil, fmt.Errorf("content has wrong number of items (%d)", len(compItems.CompiledItems))
+	if !strings.HasPrefix(args.PrivateKey, constants.SecretKeyPrefix) {
+		return fmt.Errorf("private key missing %s prefix: %w", constants.SecretKeyPrefix, ErrInvalidInput)
 	}
 
-	itemsCodeType := compItems.CompiledItems[0].CodeType
-	for _, item := range compItems.CompiledItems {
-		if itemsCodeType != item.CodeType {
-			return nil, fmt.Errorf("content has different code types (only simmilar types are allowed)")
-		}
+	prvKeyBytes, err := formatting.Decode(formatting.CB58, strings.TrimPrefix(args.PrivateKey, constants.SecretKeyPrefix))
+	if err != nil {
+		return fmt.Errorf("parsing private key: %v: %w", err, ErrInvalidInput)
 	}
 
-	return &compItems, nil
+	prvKey, err := s.vm.factory.ToPrivateKey(prvKeyBytes)
+	if err != nil {
+		return fmt.Errorf("parsing private key: %v: %w", err, ErrInvalidInput)
+	}
+
+	user, err := s.vm.getUserSvc(args.Username, args.Password)
+	if err != nil {
+		return fmt.Errorf("retrieving keystore data: %w", err)
+	}
+	defer user.Close()
+
+	addresses, err := user.GetAddresses()
+	if err != nil {
+		return err
+	}
+	if len(addresses) > 0 {
+		return fmt.Errorf("keystore user can have only one address")
+	}
+
+	sk := prvKey.(*crypto.PrivateKeySECP256K1R)
+
+	address, err := s.vm.FormatLocalAddress(sk.PublicKey().Address())
+	if err != nil {
+		return fmt.Errorf("formatting address: %w", err)
+	}
+	if err := user.PutAddress(sk); err != nil {
+		return err
+	}
+
+	reply.Address = address
+
+	return user.Close()
 }
 
-func (s *Service) convertScriptArgs(argStrs []string, argTypes []dvm.VMTypeTag) ([]types.ScriptArg, error) {
-	if len(argStrs) != len(argTypes) {
-		return nil, fmt.Errorf("strArgs / typedArgs length mismatch: %d / %d", len(argStrs), len(argTypes))
+// ListAddresses returns addresses controlled by user.
+func (s *Service) ListAddresses(_ *http.Request, args *api.UserPass, reply *AddressListResponse) error {
+	s.vm.Ctx.Log.Debug("MVM: ListAddresses called")
+	if err := s.checkInitialized(); err != nil {
+		return err
 	}
 
-	scriptArgs := make([]types.ScriptArg, len(argStrs))
-	for argIdx, argStr := range argStrs {
-		argType := argTypes[argIdx]
-		var scriptArg types.ScriptArg
-		var err error
+	user, err := s.vm.getUserSvc(args.Username, args.Password)
+	if err != nil {
+		return fmt.Errorf("retrieving keystore data: %w", err)
+	}
+	defer user.Close()
 
-		switch argType {
-		case dvm.VMTypeTag_Address:
-			scriptArg, err = newAddressScriptArg(argStr)
-		case dvm.VMTypeTag_U8:
-			scriptArg, err = newU8ScriptArg(argStr)
-		case dvm.VMTypeTag_U64:
-			scriptArg, err = newU64ScriptArg(argStr)
-		case dvm.VMTypeTag_U128:
-			scriptArg, err = newU128ScriptArg(argStr)
-		case dvm.VMTypeTag_Bool:
-			scriptArg, err = newBoolScriptArg(argStr)
-		case dvm.VMTypeTag_Vector:
-			scriptArg, err = newVectorScriptArg(argStr)
-		default:
-			return nil, fmt.Errorf("argument [%d]: parsing argument (%s): unsupported argType code: %v", argIdx, argStr, argType)
-		}
+	prvKeys, err := user.GetKeys()
+	if err != nil {
+		return err
+	}
 
+	for idx, prvKey := range prvKeys {
+		address := prvKey.PublicKey().Address()
+		addressLocal, err := s.vm.FormatLocalAddress(address)
 		if err != nil {
-			return nil, fmt.Errorf("argument [%d]: %w", argIdx, err)
-		}
-		scriptArgs[argIdx] = scriptArg
-	}
-
-	return scriptArgs, nil
-}
-
-// newAddressScriptArg convert string to address ScriptTag.
-func newAddressScriptArg(value string) (types.ScriptArg, error) {
-	argTypeCode := dvm.VMTypeTag_Address
-	argTypeName := dvm.VMTypeTag_name[int32(argTypeCode)]
-
-	if value == "" {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: empty", value, argTypeName)
-	}
-
-	return types.ScriptArg{
-		Type:  argTypeCode,
-		Value: []byte(value),
-	}, nil
-}
-
-// newU8ScriptArg convert string to U8 ScriptTag.
-func newU8ScriptArg(value string) (types.ScriptArg, error) {
-	argTypeCode := dvm.VMTypeTag_U8
-	argTypeName := dvm.VMTypeTag_name[int32(argTypeCode)]
-
-	hashParsedValue, err := parseXxHashUint(value)
-	if err != nil {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-	}
-
-	uintValue, err := strconv.ParseUint(hashParsedValue, 10, 8)
-	if err != nil {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-	}
-
-	return types.ScriptArg{
-		Type:  argTypeCode,
-		Value: []byte{uint8(uintValue)},
-	}, nil
-}
-
-// newU64ScriptArg convert string to U64 ScriptTag.
-func newU64ScriptArg(value string) (types.ScriptArg, error) {
-	argTypeCode := dvm.VMTypeTag_U64
-	argTypeName := dvm.VMTypeTag_name[int32(argTypeCode)]
-
-	hashParsedValue, err := parseXxHashUint(value)
-	if err != nil {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-	}
-
-	uintValue, err := strconv.ParseUint(hashParsedValue, 10, 64)
-	if err != nil {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-	}
-	argValue := make([]byte, 8)
-	binary.LittleEndian.PutUint64(argValue, uintValue)
-
-	return types.ScriptArg{
-		Type:  argTypeCode,
-		Value: argValue,
-	}, nil
-}
-
-// newU128ScriptArg convert string to U128 ScriptTag.
-func newU128ScriptArg(value string) (retTag types.ScriptArg, retErr error) {
-	argTypeCode := dvm.VMTypeTag_U128
-	argTypeName := dvm.VMTypeTag_name[int32(argTypeCode)]
-
-	defer func() {
-		if recover() != nil {
-			retErr = fmt.Errorf("parsing argument %q of type %q: failed", value, argTypeName)
-		}
-	}()
-
-	hashParsedValue, err := parseXxHashUint(value)
-	if err != nil {
-		retErr = fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-		return
-	}
-
-	bigValue, ok := new(big.Int).SetString(hashParsedValue, 0)
-	if !ok {
-		retErr = fmt.Errorf("parsing argument %q of type %q: invalid BigInt value", value, argTypeName)
-		return
-	}
-	if bigValue.Sign() < 0 {
-		retErr = fmt.Errorf("parsing argument %q of type %q: non-posititve BigInt value", value, argTypeName)
-		return
-	}
-	if bigValue.BitLen() > 128 {
-		retErr = fmt.Errorf("parsing argument %q of type %q: invalid bitLen %d", value, argTypeName, bigValue.BitLen())
-		return
-	}
-
-	// BigInt().Bytes() returns BigEndian format, reverse it
-	argValue := bigValue.Bytes()
-	for left, right := 0, len(argValue)-1; left < right; left, right = left+1, right-1 {
-		argValue[left], argValue[right] = argValue[right], argValue[left]
-	}
-
-	// Extend to 16 bytes
-	if len(argValue) < 16 {
-		zeros := make([]byte, 16-len(argValue))
-		argValue = append(argValue, zeros...)
-	}
-
-	retTag.Type, retTag.Value = argTypeCode, argValue
-
-	return
-}
-
-// newVectorScriptArg convert string to Vector ScriptTag.
-func newVectorScriptArg(value string) (types.ScriptArg, error) {
-	argTypeCode := dvm.VMTypeTag_Vector
-	argTypeName := dvm.VMTypeTag_name[int32(argTypeCode)]
-
-	if value == "" {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: empty", value, argTypeName)
-	}
-
-	argValue, err := hex.DecodeString(strings.TrimPrefix(value, "0x"))
-	if err != nil {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-	}
-
-	return types.ScriptArg{
-		Type:  argTypeCode,
-		Value: argValue,
-	}, nil
-}
-
-// newBoolScriptArg convert string to Bool ScriptTag.
-func newBoolScriptArg(value string) (types.ScriptArg, error) {
-	argTypeCode := dvm.VMTypeTag_Bool
-	argTypeName := dvm.VMTypeTag_name[int32(argTypeCode)]
-
-	valueBool, err := strconv.ParseBool(value)
-	if err != nil {
-		return types.ScriptArg{}, fmt.Errorf("parsing argument %q of type %q: %w", value, argTypeName, err)
-	}
-
-	argValue := []byte{0}
-	if valueBool {
-		argValue[0] = 1
-	}
-
-	return types.ScriptArg{
-		Type:  argTypeCode,
-		Value: argValue,
-	}, nil
-}
-
-// parseXxHashUint converts (or skips) xxHash integer format.
-func parseXxHashUint(value string) (string, error) {
-	if value == "" {
-		return "", fmt.Errorf("xxHash parsing: empty")
-	}
-
-	if value[0] == '#' {
-		seed := xxhash.NewS64(0)
-		if len(value) < 2 {
-			return "", fmt.Errorf("xxHash parsing: invalid length")
+			return fmt.Errorf("private key [%d]: formatting to local address: %w", idx, err)
 		}
 
-		if _, err := seed.WriteString(strings.ToLower(value[1:])); err != nil {
-			return "", fmt.Errorf("xxHash parsing: %w", err)
-		}
-		value = strconv.FormatUint(seed.Sum64(), 10)
+		reply.Addresses = append(reply.Addresses, AddressResponse{
+			CB58:  address.String(),
+			Local: addressLocal,
+			Hex:   hex.EncodeToString(address.Bytes()),
+		})
 	}
 
-	return value, nil
+	return user.Close()
+}
+
+func (s *Service) checkInitialized() error {
+	if err := s.vm.CheckInitialized(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Service) getUserCreds(args api.UserPass) (ids.ShortID, []*crypto.PrivateKeySECP256K1R, error) {
+	user, err := s.vm.getUserSvc(args.Username, args.Password)
+	if err != nil {
+		return ids.ShortID{}, nil, fmt.Errorf("retrieving keystore data: %w", err)
+	}
+	defer user.Close()
+
+	addresses, err := user.GetAddresses()
+	if err != nil {
+		return ids.ShortID{}, nil, err
+	}
+	if len(addresses) == 0 {
+		return ids.ShortID{}, nil, fmt.Errorf("user has no addresses in the keystore: %w", ErrInvalidInput)
+	}
+
+	address := addresses[0]
+	keys, err := user.GetKeys()
+	if err != nil {
+		return ids.ShortID{}, nil, err
+	}
+
+	return address, keys, nil
+}
+
+func (s *Service) parseSenderAddress(addressStr string) (ids.ShortID, error) {
+	id, err := s.vm.ParseLocalAddress(addressStr)
+	if err != nil {
+		return ids.ShortID{}, fmt.Errorf("parsing address: %v: %w", err, ErrInvalidInput)
+	}
+
+	return id, nil
+}
+
+func (s *Service) parseCompiledContent(content string) (stateTypes.CompiledItems, error) {
+	resp := CompileResponse{}
+	if err := json.Unmarshal([]byte(content), &resp); err != nil {
+		return nil, fmt.Errorf("compiledContent: JSON unmarshal: %v: %w", err, ErrInvalidInput)
+	}
+
+	return resp.CompiledItems, nil
 }

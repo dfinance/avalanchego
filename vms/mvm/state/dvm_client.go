@@ -11,20 +11,20 @@ import (
 	"google.golang.org/grpc"
 )
 
-// VMExecRetryReq contains VM "execution" request meta (request details and retry settings).
-type VMExecRetryReq struct {
+// vmExecRetryReq contains VM "execution" request meta (request details and retry settings).
+type vmExecRetryReq struct {
 	// Request to retry (module publish).
-	RawModule *dvm.VMPublishModule
+	rawModule *dvm.VMPublishModule
 	// Request to retry (script execution)
-	RawScript *dvm.VMExecuteScript
+	rawScript *dvm.VMExecuteScript
 	// Max number of request attempts (0 - infinite)
-	MaxAttempts uint
+	maxAttempts uint
 	// Request timeout per attempt (0 - infinite) [ms]
-	ReqTimeoutInMs time.Duration
+	reqTimeoutInMs time.Duration
 }
 
-// DVMClient is an aggregated gRPC DVM services client.
-type DVMClient struct {
+// dvmClient is an aggregated DVM gRPC services client.
+type dvmClient struct {
 	sync.Mutex
 	dvm.DvmCompilerClient
 	dvm.DVMBytecodeMetadataClient
@@ -38,9 +38,9 @@ type DVMClient struct {
 	reqTimeout  time.Duration
 }
 
-// NewDVMClient creates VMClient using gRPC connection.
-func NewDVMClient(logger logging.Logger, maxAttempts, reqTimeoutMs uint, conn *grpc.ClientConn) *DVMClient {
-	return &DVMClient{
+// newDVMClient creates a new dvmClient instance using gRPC connection.
+func newDVMClient(logger logging.Logger, maxAttempts, reqTimeoutMs uint, conn *grpc.ClientConn) *dvmClient {
+	return &dvmClient{
 		DvmCompilerClient:         dvm.NewDvmCompilerClient(conn),
 		DVMBytecodeMetadataClient: dvm.NewDVMBytecodeMetadataClient(conn),
 		VMModulePublisherClient:   dvm.NewVMModulePublisherClient(conn),
@@ -53,7 +53,7 @@ func NewDVMClient(logger logging.Logger, maxAttempts, reqTimeoutMs uint, conn *g
 }
 
 // Close closes DVM connection.
-func (c *DVMClient) Close() error {
+func (c *dvmClient) Close() error {
 	c.Lock()
 	defer c.Unlock()
 
@@ -65,7 +65,7 @@ func (c *DVMClient) Close() error {
 }
 
 // SendExecuteReq sends request with retry mechanism.
-func (c *DVMClient) SendExecuteReq(moduleReq *dvm.VMPublishModule, scriptReq *dvm.VMExecuteScript) (*dvm.VMExecuteResponse, error) {
+func (c *dvmClient) SendExecuteReq(moduleReq *dvm.VMPublishModule, scriptReq *dvm.VMExecuteScript) (*dvm.VMExecuteResponse, error) {
 	if moduleReq == nil && scriptReq == nil {
 		return nil, fmt.Errorf("request (module / script) not specified")
 	}
@@ -73,11 +73,11 @@ func (c *DVMClient) SendExecuteReq(moduleReq *dvm.VMPublishModule, scriptReq *dv
 		return nil, fmt.Errorf("only single request (module / script) is supported")
 	}
 
-	retryReq := VMExecRetryReq{
-		RawModule:      moduleReq,
-		RawScript:      scriptReq,
-		MaxAttempts:    c.maxAttempts,
-		ReqTimeoutInMs: c.reqTimeout,
+	retryReq := vmExecRetryReq{
+		rawModule:      moduleReq,
+		rawScript:      scriptReq,
+		maxAttempts:    c.maxAttempts,
+		reqTimeoutInMs: c.reqTimeout,
 	}
 
 	return c.retryExecReq(retryReq)
@@ -85,12 +85,12 @@ func (c *DVMClient) SendExecuteReq(moduleReq *dvm.VMPublishModule, scriptReq *dv
 
 // retryExecReq sends request with retry mechanism and waits for connection and execution.
 // Contract: either RawModule or RawScript must be specified for RetryExecReq.
-func (c *DVMClient) retryExecReq(req VMExecRetryReq) (retResp *dvm.VMExecuteResponse, retErr error) {
+func (c *dvmClient) retryExecReq(req vmExecRetryReq) (retResp *dvm.VMExecuteResponse, retErr error) {
 	const failedRetryLogPeriod = 100
 
 	doneCh := make(chan bool)
 	curAttempt := uint(0)
-	reqTimeout := req.ReqTimeoutInMs
+	reqTimeout := req.reqTimeoutInMs
 	reqStartedAt := time.Now()
 
 	go func() {
@@ -112,10 +112,10 @@ func (c *DVMClient) retryExecReq(req VMExecRetryReq) (retResp *dvm.VMExecuteResp
 			}
 
 			curReqStartedAt := time.Now()
-			if req.RawModule != nil {
-				resp, err = c.VMModulePublisherClient.PublishModule(connCtx, req.RawModule)
-			} else if req.RawScript != nil {
-				resp, err = c.VMScriptExecutorClient.ExecuteScript(connCtx, req.RawScript)
+			if req.rawModule != nil {
+				resp, err = c.VMModulePublisherClient.PublishModule(connCtx, req.rawModule)
+			} else if req.rawScript != nil {
+				resp, err = c.VMScriptExecutorClient.ExecuteScript(connCtx, req.rawScript)
 			}
 			if connCancel != nil {
 				connCancel()
@@ -127,7 +127,7 @@ func (c *DVMClient) retryExecReq(req VMExecRetryReq) (retResp *dvm.VMExecuteResp
 				return
 			}
 
-			if req.MaxAttempts != 0 && curAttempt == req.MaxAttempts {
+			if req.maxAttempts != 0 && curAttempt == req.maxAttempts {
 				retResp, retErr = nil, err
 				return
 			}
@@ -137,7 +137,7 @@ func (c *DVMClient) retryExecReq(req VMExecRetryReq) (retResp *dvm.VMExecuteResp
 			}
 
 			if curAttempt%failedRetryLogPeriod == 0 {
-				c.log.Info("Failing VM request: attempt %d / %d with %v timeout: %v", curAttempt, req.MaxAttempts, reqTimeout, time.Since(reqStartedAt))
+				c.log.Info("DVM client: failing VM request: attempt %d / %d with %v timeout: %v", curAttempt, req.maxAttempts, reqTimeout, time.Since(reqStartedAt))
 			}
 		}
 	}()
@@ -146,10 +146,11 @@ func (c *DVMClient) retryExecReq(req VMExecRetryReq) (retResp *dvm.VMExecuteResp
 	reqDur := time.Since(reqStartedAt)
 	msg := fmt.Sprintf("in %d attempt(s) with %v timeout (%v)", curAttempt, reqTimeout, reqDur)
 	if retErr == nil {
-		c.log.Info(fmt.Sprintf("Successfull VM request (%s)", msg))
+		c.log.Info(fmt.Sprintf("DVM client: successfull VM request (%s)", msg))
 	} else {
-		c.log.Error(fmt.Sprintf("Failed VM request (%s): %v", msg, retErr))
+		c.log.Error(fmt.Sprintf("DVM client: failed VM request (%s): %v", msg, retErr))
 		retErr = fmt.Errorf("%s: %w", msg, retErr)
+		return
 	}
 
 	return

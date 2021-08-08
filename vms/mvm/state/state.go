@@ -9,20 +9,24 @@ import (
 	"github.com/ava-labs/avalanchego/database/versiondb"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
-	"github.com/ava-labs/avalanchego/vms/mvm/types"
+	"github.com/ava-labs/avalanchego/vms/mvm/state/types"
 )
 
+// State encapsulates DVM related operations for M-chain.
 type State struct {
 	baseDB      *versiondb.Database
-	writeSetsDB database.Database
 	singletonDB database.Database
 
 	log       logging.Logger
-	dsServer  *DSServer
-	dvmClient *DVMClient
+	wsStorage *wsStorage
+	dvmClient *dvmClient
+	dsServer  *dsServer
 }
 
-func NewState(logger logging.Logger, config types.DVMConnection, genesisData []byte, db database.Database) (*State, bool, error) {
+// NewState creates a new State instance initializing genesis data if needed.
+func NewState(logger logging.Logger, config types.DVMConnectionConfig, genesisData []byte, db database.Database) (*State, bool, error) {
+	logger.Info("InternalState: using DVM connection (%s) and DS address (%s)", config.DVMAddress, config.DataServerAddress)
+
 	dsListener, err := GetGRpcNetListener(config.DataServerAddress)
 	if err != nil {
 		return nil, false, fmt.Errorf("creating DS server listener: %w", err)
@@ -34,14 +38,19 @@ func NewState(logger logging.Logger, config types.DVMConnection, genesisData []b
 	}
 
 	baseDB := versiondb.New(db)
+	singletonDB := prefixdb.New(singletonDBPrefix, baseDB)
+	wsStorage := newWSStorage(logger, prefixdb.New(writeSetsDBPrefix, baseDB))
+	dvmClient := newDVMClient(logger, config.MaxAttempts, config.ReqTimeoutInMs, dvmConnection)
+	dsSever := newDSServer(logger, wsStorage, dsListener)
+
 	s := &State{
 		baseDB:      baseDB,
-		writeSetsDB: prefixdb.New(writeSetsDBPrefix, baseDB),
-		singletonDB: prefixdb.New(singletonDBPrefix, baseDB),
+		singletonDB: singletonDB,
 		log:         logger,
-		dvmClient:   NewDVMClient(logger, config.MaxAttempts, config.ReqTimeoutInMs, dvmConnection),
+		wsStorage:   wsStorage,
+		dvmClient:   dvmClient,
+		dsServer:    dsSever,
 	}
-	s.dsServer = NewDSServer(logger, s, dsListener)
 
 	genesisBlockInitialized, err := s.sync(genesisData)
 	if err != nil {
@@ -53,13 +62,14 @@ func NewState(logger logging.Logger, config types.DVMConnection, genesisData []b
 	return s, genesisBlockInitialized, nil
 }
 
+// Close stops all inner services.
 func (s *State) Close() error {
 	s.dsServer.Stop()
 
 	errs := wrappers.Errs{}
 	errs.Add(
 		s.dvmClient.Close(),
-		s.writeSetsDB.Close(),
+		s.wsStorage.Close(),
 		s.singletonDB.Close(),
 		s.baseDB.Close(),
 	)
@@ -67,6 +77,7 @@ func (s *State) Close() error {
 	return errs.Err
 }
 
+// isInitialized checks if genesis has been synced.
 func (s *State) isInitialized() (bool, error) {
 	found, err := s.singletonDB.Has(initializedKey)
 	if err != nil {
@@ -76,10 +87,12 @@ func (s *State) isInitialized() (bool, error) {
 	return !found, nil
 }
 
+// setInitialized sets genesis initialized flag.
 func (s *State) setInitialized() error {
 	return s.singletonDB.Put(initializedKey, nil)
 }
 
+// sync initializes genesis data.
 func (s *State) sync(genesisData []byte) (bool, error) {
 	shouldInit, err := s.isInitialized()
 	if err != nil {
@@ -93,9 +106,6 @@ func (s *State) sync(genesisData []byte) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("building genesisState: %w", err)
 	}
-	if err := genesisState.Validate(); err != nil {
-		return false, fmt.Errorf("validating genesisState: %w", err)
-	}
 
 	for idx, writeSet := range genesisState.WriteSets {
 		path, data, err := writeSet.ToBytes()
@@ -103,7 +113,7 @@ func (s *State) sync(genesisData []byte) (bool, error) {
 			return false, fmt.Errorf("converting writeSet [%d]: %w", idx, err)
 		}
 
-		if err := s.PutWriteSet(path, data); err != nil {
+		if err := s.wsStorage.PutWriteSet(path, data); err != nil {
 			return false, err
 		}
 	}

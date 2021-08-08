@@ -10,36 +10,54 @@ import (
 )
 
 // NewBlock returns a new Block.
-func (vm *VM) NewBlock(parentID ids.ID, height uint64, txs []types.Tx) (*Block, error) {
+func (vm *VM) NewBlock(parentID ids.ID, height uint64, tx *types.Tx) (*Block, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx: nil")
+	}
+
 	block := &Block{
 		Block: core.NewBlock(parentID, height),
-		Txs:   txs,
+		Txs:   []*types.Tx{tx},
 	}
 
 	blockBz, err := vm.codec.Marshal(types.CodecVersion, block)
 	if err != nil {
 		return nil, fmt.Errorf("block marshal: %w", err)
 	}
-	block.Initialize(blockBz, &vm.SnowmanVM, vm.state)
+
+	if err := block.Initialize(blockBz, vm); err != nil {
+		return nil, fmt.Errorf("block initialization: %w", err)
+	}
 
 	return block, nil
 }
 
-// ParseBlock parses [bytes] to a snowman.Block.
-// This function is used by the VM's state to unmarshal blocks saved in state.
+// ParseBlock parses bytes to a snowman.Block.
 func (vm *VM) ParseBlock(blockBz []byte) (snowman.Block, error) {
+	//vm.Ctx.Log.Info("VM.ParseBlock")
+
 	block := &Block{}
 	if _, err := vm.codec.Unmarshal(blockBz, block); err != nil {
-		vm.Ctx.Log.Error("Parsing block: %v", err)
-		return nil, fmt.Errorf("block unmarshal: %w", err)
+		err = fmt.Errorf("block unmarshal: %w", err)
+		vm.Ctx.Log.Error("VM.ParseBlock: %v", err)
+		return nil, err
 	}
-	block.Initialize(blockBz, &vm.SnowmanVM, vm.state)
+
+	if err := block.Initialize(blockBz, vm); err != nil {
+		err = fmt.Errorf("block initialization: %w", err)
+		vm.Ctx.Log.Error("VM.ParseBlock: %v", err)
+		return nil, err
+	}
+
+	//vm.Ctx.Log.Info(block.String())
 
 	return block, nil
 }
 
 // BuildBlock implements block.ChainVM interface.
 func (vm *VM) BuildBlock() (snowman.Block, error) {
+	vm.Ctx.Log.Info("VM.BuildBlock")
+
 	if len(vm.mempool) == 0 {
 		return nil, fmt.Errorf("no block to propose")
 	}
@@ -55,26 +73,25 @@ func (vm *VM) BuildBlock() (snowman.Block, error) {
 
 	preferredBlock, err := vm.GetBlock(vm.Preferred())
 	if err != nil {
-		vm.Ctx.Log.Error("Building block: getting preferred block: %v", err)
-		return nil, fmt.Errorf("getting preferred block: %w", err)
+		err = fmt.Errorf("getting preferred block: %w", err)
+		vm.Ctx.Log.Error("VM.BuildBlock: %v", err)
+		return nil, err
 	}
 	preferredHeight := preferredBlock.(*Block).Height()
 
 	// Build the block
 	block, err := vm.NewBlock(vm.Preferred(), preferredHeight+1, value)
 	if err != nil {
-		vm.Ctx.Log.Error("Building block: creating a new Block: %v", err)
-		return nil, fmt.Errorf("building new block: %w", err)
+		err = fmt.Errorf("building new block: %w", err)
+		vm.Ctx.Log.Error("VM.BuildBlock: %v", err)
+		return nil, err
 	}
 
 	return block, nil
 }
 
-// proposeBlock appends data to mempool and notifies the consensus engine.
-func (vm *VM) proposeBlock(data []types.Tx) {
-	txs := make([]types.Tx, len(data))
-	copy(txs, data)
-
-	vm.mempool = append(vm.mempool, data)
+// issueTx appends Tx to the mempool and notifies the consensus engine.
+func (vm *VM) issueTx(tx *types.Tx) {
+	vm.mempool = append(vm.mempool, tx)
 	vm.NotifyBlockReady()
 }

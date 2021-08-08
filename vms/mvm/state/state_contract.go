@@ -8,14 +8,29 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/mvm/dvm"
-	"github.com/ava-labs/avalanchego/vms/mvm/types"
+	"github.com/ava-labs/avalanchego/vms/mvm/state/types"
 )
 
 // ExecuteContract executes Move script and processes execution results (events, writeSets).
-func (s *State) ExecuteContract(msg types.TxExecuteScript, blockHeight uint64) (types.Events, error) {
-	s.log.Info("Execute contract")
+func (s *State) ExecuteContract(msg *types.MsgExecuteScript, blockHeight uint64) (types.Events, error) {
+	vmArgs := make([]*dvm.VMArgs, 0, len(msg.Args))
+	for _, arg := range msg.Args {
+		vmArgs = append(vmArgs, &dvm.VMArgs{
+			Type:  arg.Type,
+			Value: arg.Value,
+		})
+	}
 
-	req := types.NewVMExecuteScriptRequest(msg.Signer, msg.Script, blockHeight, msg.Args...)
+	req := &dvm.VMExecuteScript{
+		Senders:      [][]byte{msg.Sender},
+		MaxGasAmount: types.DVMGasLimit,
+		GasUnitPrice: types.DVMGasPrice,
+		Block:        blockHeight,
+		Timestamp:    0,
+		Code:         msg.Script,
+		TypeParams:   nil,
+		Args:         vmArgs,
+	}
 
 	exec, err := s.dvmClient.SendExecuteReq(nil, req)
 	if err != nil {
@@ -26,12 +41,15 @@ func (s *State) ExecuteContract(msg types.TxExecuteScript, blockHeight uint64) (
 }
 
 // DeployContract deploys Move module (contract) and processes execution results (events, writeSets).
-func (s *State) DeployContract(msg types.TxDeployModule) (types.Events, error) {
-	s.log.Info("Deploy contract")
-
+func (s *State) DeployContract(msg *types.MsgDeployModule) (types.Events, error) {
 	execList := make([]*dvm.VMExecuteResponse, 0, len(msg.Modules))
 	for i, code := range msg.Modules {
-		req := types.NewVMPublishModuleRequests(msg.Signer, code)
+		req := &dvm.VMPublishModule{
+			Sender:       msg.Sender,
+			MaxGasAmount: types.DVMGasLimit,
+			GasUnitPrice: types.DVMGasPrice,
+			Code:         code,
+		}
 
 		exec, err := s.dvmClient.SendExecuteReq(req, nil)
 		if err != nil {
@@ -58,16 +76,13 @@ func (s *State) DeployContract(msg types.TxDeployModule) (types.Events, error) {
 	return retEvents, retErr
 }
 
-func (s *State) GetMetadata(code []byte) (*types.Metadata, error) {
-	if len(code) == 0 {
-		return nil, fmt.Errorf("code: empty: %w", types.ErrInvalidInput)
-	}
-
+// GetMetadata returns contract metadata by its byte code.
+func (s *State) GetMetadata(msg *types.MsgGetMetadata) (*types.Metadata, error) {
 	ctx, ctxCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer ctxCancel()
 
 	res, err := s.dvmClient.GetMetadata(ctx, &dvm.Bytecode{
-		Code: code,
+		Code: msg.Code,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting meta information: %w", err)
@@ -76,14 +91,8 @@ func (s *State) GetMetadata(code []byte) (*types.Metadata, error) {
 	return &types.Metadata{Metadata: res}, nil
 }
 
-func (s *State) Compile(senderAddress, code []byte) ([]types.CompiledItem, error) {
-	if len(senderAddress) != types.DVMAddressLength {
-		return nil, fmt.Errorf("address: invalid length (should be %d): %w", types.DVMAddressLength, types.ErrInvalidInput)
-	}
-	if len(code) == 0 {
-		return nil, fmt.Errorf("code: empty: %w", types.ErrInvalidInput)
-	}
-
+// Compile compiles Move code.
+func (s *State) Compile(msg *types.MsgCompile) (types.CompiledItems, error) {
 	ctx, ctxCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer ctxCancel()
 
@@ -91,11 +100,11 @@ func (s *State) Compile(senderAddress, code []byte) ([]types.CompiledItem, error
 	resp, err := s.dvmClient.Compile(ctx, &dvm.SourceFiles{
 		Units: []*dvm.CompilationUnit{
 			{
-				Text: string(code),
+				Text: string(msg.Code),
 				Name: "CompilationUnit",
 			},
 		},
-		Address: senderAddress,
+		Address: msg.Sender,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("DVM connection: %w", err)
@@ -107,7 +116,7 @@ func (s *State) Compile(senderAddress, code []byte) ([]types.CompiledItem, error
 	}
 
 	// Build response
-	compItems := make([]types.CompiledItem, 0, len(resp.Units))
+	compItems := make(types.CompiledItems, 0, len(resp.Units))
 	for _, unit := range resp.Units {
 		compItem := types.CompiledItem{
 			ByteCode: unit.Bytecode,
@@ -135,7 +144,7 @@ func (s *State) Compile(senderAddress, code []byte) ([]types.CompiledItem, error
 	return compItems, nil
 }
 
-// processDVMExecution processes DVM execution result: eupdates writeSets.
+// processDVMExecution processes DVM execution result: updates writeSets.
 func (s *State) processDVMExecution(exec *dvm.VMExecuteResponse) (types.Events, error) {
 	// Build events with infinite (almost) gasMeter
 	events, err := types.NewContractEvents(exec)
@@ -173,11 +182,11 @@ func (s *State) processDVMWriteSet(writeSet []*dvm.VMValue) error {
 
 		switch value.Type {
 		case dvm.VmWriteOp_Value:
-			if err := s.PutWriteSet(value.Path, value.Value); err != nil {
+			if err := s.wsStorage.PutWriteSet(value.Path, value.Value); err != nil {
 				return fmt.Errorf("writeSet [%d]: WriteOp: %w", i, err)
 			}
 		case dvm.VmWriteOp_Deletion:
-			if err := s.DeleteWriteSet(value.Path); err != nil {
+			if err := s.wsStorage.DeleteWriteSet(value.Path); err != nil {
 				return fmt.Errorf("writeSet [%d]: DeleteOp: %w", i, err)
 			}
 		default:
