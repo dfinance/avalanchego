@@ -6,6 +6,7 @@ import (
 	"github.com/ava-labs/avalanchego/codec"
 	"github.com/ava-labs/avalanchego/codec/linearcodec"
 	"github.com/ava-labs/avalanchego/database/manager"
+	"github.com/ava-labs/avalanchego/database/prefixdb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
@@ -43,6 +44,7 @@ func (vm *VM) Initialize(
 		linerCodec.RegisterType(&types.UnsignedMoveTx{}),
 		linerCodec.RegisterType(&secp256k1fx.Credential{}),
 		linerCodec.RegisterType(&types.Tx{}),
+		linerCodec.RegisterType(&types.TxState{}),
 		//
 		linerCodec.RegisterType(&Block{}),
 	)
@@ -84,6 +86,8 @@ func (vm *VM) Initialize(
 	}
 	vm.state = internalState
 
+	vm.txStorage = newTXStorage(vm.codec, prefixdb.New(txsDBPrefix, dbManager.Current().Database))
+
 	if genesisBlockInitialized {
 		ctx.Log.Info("VM.Initialize: creating genesis block")
 
@@ -103,9 +107,16 @@ func (vm *VM) Initialize(
 // Shutdown implements common.VM interface.
 func (vm *VM) Shutdown() error {
 	vm.Ctx.Log.Info("VM.Shutdown: M-chain")
+	vm.initialized = false
+
 	if vm.state != nil {
 		if err := vm.state.Close(); err != nil {
 			return fmt.Errorf("closing internal state: %w", err)
+		}
+	}
+	if vm.txStorage != nil {
+		if err := vm.txStorage.Close(); err != nil {
+			return fmt.Errorf("closing tx storage: %w", err)
 		}
 	}
 

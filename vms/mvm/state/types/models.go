@@ -35,13 +35,13 @@ type Metadata struct {
 // Event keeps DVM event.
 type (
 	Event struct {
-		Type       string           `json:"type"`
-		Attributes []EventAttribute `json:"attributes"`
+		Type       string           `serialize:"true" json:"type"`
+		Attributes []EventAttribute `serialize:"true" json:"attributes"`
 	}
 
 	EventAttribute struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
+		Key   string `serialize:"true" json:"key"`
+		Value string `serialize:"true" json:"value"`
 	}
 
 	Events []Event

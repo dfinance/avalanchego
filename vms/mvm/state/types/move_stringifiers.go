@@ -33,7 +33,7 @@ func StringifySenderAddress(addr []byte) string {
 	if bytes.Equal(addr, DVMStdLibAddress) {
 		return DVMStdLibAddressShortStr
 	} else {
-		return string(addr)
+		return hex.EncodeToString(addr)
 	}
 }
 

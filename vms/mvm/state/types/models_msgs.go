@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OneOfOne/xxhash"
 	"github.com/ava-labs/avalanchego/ids"
@@ -22,9 +23,10 @@ type Msg interface {
 // MsgExecuteScript defines a message to execute a script with args using DVM.
 type (
 	MsgExecuteScript struct {
-		Sender []byte      `serialize:"true" json:"sender"` // Sender address
-		Script []byte      `serialize:"true" json:"script"` // Script Byte code
-		Args   []ScriptArg `serialize:"true" json:"args"`   // Script arguments
+		Sender    []byte      `serialize:"true" json:"sender"`    // Sender address
+		Script    []byte      `serialize:"true" json:"script"`    // Script Byte code
+		Args      []ScriptArg `serialize:"true" json:"args"`      // Script arguments
+		Timestamp int64       `serialize:"true" json:"timestamp"` // Execution timestamp (changes Tx hash and allows multiple executions for the same code)
 	}
 
 	ScriptArg struct {
@@ -67,6 +69,10 @@ func (m MsgExecuteScript) Validate() error {
 		if len(arg.Value) == 0 {
 			return fmt.Errorf("args [%d]: value: empty", i)
 		}
+	}
+
+	if m.Timestamp == 0 {
+		return fmt.Errorf("timestamp: empty")
 	}
 
 	return nil
@@ -179,9 +185,10 @@ func (b *MsgBuilder) ExecuteScript(senderAddress ids.ShortID, compiledItems Comp
 	}
 
 	b.msg = &MsgExecuteScript{
-		Sender: senderAddress.Bytes(),
-		Script: compiledItems[0].ByteCode,
-		Args:   args,
+		Sender:    senderAddress.Bytes(),
+		Script:    compiledItems[0].ByteCode,
+		Args:      args,
+		Timestamp: time.Now().UnixNano(),
 	}
 
 	return b

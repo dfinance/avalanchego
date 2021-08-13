@@ -22,10 +22,11 @@ type VM struct {
 	core.SnowmanVM
 	avax.AddressManager
 
-	codec   codec.Manager
-	factory crypto.FactorySECP256K1R
-	state   *state.State
-	mempool []*types.Tx
+	codec     codec.Manager
+	factory   crypto.FactorySECP256K1R
+	state     *state.State
+	txStorage *txStorage
+	mempool   []*types.Tx
 
 	config      types.Config
 	initialized bool

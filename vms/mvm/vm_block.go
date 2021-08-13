@@ -90,8 +90,18 @@ func (vm *VM) BuildBlock() (snowman.Block, error) {
 	return block, nil
 }
 
-// issueTx appends Tx to the mempool and notifies the consensus engine.
-func (vm *VM) issueTx(tx *types.Tx) {
+// issueTx appends Tx to the mempool and notifies the consensus engine if Tx not exists.
+func (vm *VM) issueTx(tx *types.Tx) error {
+	existingTx, err := vm.txStorage.GetTxState(tx.ID())
+	if err != nil {
+		return fmt.Errorf("checking if Tx exists in state: %w", err)
+	}
+	if existingTx != nil {
+		return fmt.Errorf("tx (%s) exists in state with status (%s)", tx.ID(), existingTx.TxStatus)
+	}
+
 	vm.mempool = append(vm.mempool, tx)
 	vm.NotifyBlockReady()
+
+	return nil
 }

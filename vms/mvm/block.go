@@ -134,13 +134,16 @@ func (b *Block) commitTxs() error {
 		case *types.UnsignedMoveTx:
 			events, err := b.commitUnsignedMoveTx(utx)
 			b.vm.Ctx.Log.Info("Executing MoveTx (%s): error: %v", txRaw.ID().String(), err)
-			if len(events) > 0 {
-				b.vm.Ctx.Log.Info("Executing MoveTx (%s): events:", txRaw.ID().String())
-				b.vm.Ctx.Log.Info(events.String())
+			if err != nil {
+				if err := b.vm.txStorage.PutDroppedTx(txRaw, events); err != nil {
+					return fmt.Errorf("tx [%d] (%T): saving dropped Tx: %w", txIdx, utx, err)
+				}
+
+				return fmt.Errorf("tx [%d] (%T): %w", txIdx, utx, err)
 			}
 
-			if err != nil {
-				return fmt.Errorf("tx [%d] (%T): %w", txIdx, utx, err)
+			if err := b.vm.txStorage.PutCommittedTx(txRaw, events); err != nil {
+				return fmt.Errorf("tx [%d] (%T): saving committed Tx: %w", txIdx, utx, err)
 			}
 		default:
 			return fmt.Errorf("tx [%d] (%T): unknown UnsignedTx type", txIdx, txRaw)

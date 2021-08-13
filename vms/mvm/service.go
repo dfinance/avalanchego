@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/crypto"
 	"github.com/ava-labs/avalanchego/utils/formatting"
 	stateTypes "github.com/ava-labs/avalanchego/vms/mvm/state/types"
+	"github.com/ava-labs/avalanchego/vms/mvm/types"
 )
 
 var (
@@ -71,6 +72,16 @@ type (
 		CB58  string `json:"cb58_format"`
 		Local string `json:"local_format"`
 		Hex   string `json:"hex_format"`
+	}
+)
+
+type (
+	GetTxStatusRequest struct {
+		TxID ids.ID `json:"txID"`
+	}
+
+	GetTxStatusResponse struct {
+		TxState *types.TxState `json:"txState"`
 	}
 )
 
@@ -138,7 +149,10 @@ func (s *Service) Deploy(_ *http.Request, args *DeployRequest, reply *api.JSONTx
 		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
 	}
 
-	s.vm.issueTx(tx)
+	if err := s.vm.issueTx(tx); err != nil {
+		return fmt.Errorf("issuing Tx: %w", err)
+	}
+	reply.TxID = tx.ID()
 
 	return nil
 }
@@ -174,7 +188,10 @@ func (s *Service) Execute(_ *http.Request, args *ExecuteRequest, reply *api.JSON
 		return fmt.Errorf("%v: %w", err, ErrInvalidInput)
 	}
 
-	s.vm.issueTx(tx)
+	if err := s.vm.issueTx(tx); err != nil {
+		return fmt.Errorf("issuing Tx: %w", err)
+	}
+	reply.TxID = tx.ID()
 
 	return nil
 }
@@ -262,6 +279,52 @@ func (s *Service) ListAddresses(_ *http.Request, args *api.UserPass, reply *Addr
 	}
 
 	return user.Close()
+}
+
+// GetTxStatus gets a Tx state.
+func (s *Service) GetTxStatus(_ *http.Request, args *GetTxStatusRequest, reply *GetTxStatusResponse) error {
+	s.vm.Ctx.Log.Debug("MVM: GetTxStatus called")
+	if err := s.checkInitialized(); err != nil {
+		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: not inited")
+		return err
+	}
+
+	txState, err := s.vm.txStorage.GetTxState(args.TxID)
+	if err != nil {
+		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: %v", err)
+		return err
+	}
+	if txState != nil {
+		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: found")
+		reply.TxState = txState
+		return nil
+	}
+
+	preferredBlockRaw, err := s.vm.GetBlock(s.vm.Preferred())
+	if err != nil {
+		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: %v", err)
+		return fmt.Errorf("reading preferred block: %w", err)
+	}
+	preferredBlock, ok := preferredBlockRaw.(*Block)
+	if !ok {
+		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: not OK")
+		return fmt.Errorf("reading preferred block: invalid type: %T", preferredBlockRaw)
+	}
+
+	for _, tx := range preferredBlock.Txs {
+		if tx.ID() == args.TxID {
+			reply.TxState = &types.TxState{
+				Tx:       *tx,
+				TxStatus: types.TxStatusProcessing,
+				Events:   nil,
+			}
+
+			return nil
+		}
+	}
+	s.vm.Ctx.Log.Debug("MVM: GetTxStatus: return nil")
+
+	return nil
 }
 
 func (s *Service) checkInitialized() error {
