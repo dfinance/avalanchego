@@ -15,12 +15,14 @@ const (
 	txCacheSize = 2048
 )
 
+// txStorage encapsulates transactions storage operation.
 type txStorage struct {
 	codec          codec.Manager
 	txsDB          database.Database
 	droppedTxCache cache.Cacher
 }
 
+// newTXStorage creates a new txStorage instance.
 func newTXStorage(codec codec.Manager, db database.Database) *txStorage {
 	return &txStorage{
 		codec:          codec,
@@ -29,6 +31,7 @@ func newTXStorage(codec codec.Manager, db database.Database) *txStorage {
 	}
 }
 
+// Close closes Tx DB.
 func (s *txStorage) Close() error {
 	if err := s.txsDB.Close(); err != nil {
 		return fmt.Errorf("closing txs storage: %w", err)
@@ -37,6 +40,7 @@ func (s *txStorage) Close() error {
 	return nil
 }
 
+// PutCommittedTx puts a new committed transaction to DB.
 func (s *txStorage) PutCommittedTx(tx *types.Tx, events stateTypes.Events) error {
 	txStateBz, err := s.buildTxStateBz(tx, types.TxStatusCommitted, events)
 	if err != nil {
@@ -51,6 +55,7 @@ func (s *txStorage) PutCommittedTx(tx *types.Tx, events stateTypes.Events) error
 	return nil
 }
 
+// PutDroppedTx puts a new dropped transaction to LRU cache.
 func (s *txStorage) PutDroppedTx(tx *types.Tx, events stateTypes.Events) error {
 	txStateBz, err := s.buildTxStateBz(tx, types.TxStatusCommitted, events)
 	if err != nil {
@@ -62,6 +67,7 @@ func (s *txStorage) PutDroppedTx(tx *types.Tx, events stateTypes.Events) error {
 	return nil
 }
 
+// GetTxState gets an existing transaction from LRU cache or DB.
 func (s *txStorage) GetTxState(txID ids.ID) (*types.TxState, error) {
 	if txStateBz, found := s.droppedTxCache.Get(txID); found {
 		return s.unmarshalTxStateBz(txStateBz.([]byte))
@@ -84,6 +90,7 @@ func (s *txStorage) GetTxState(txID ids.ID) (*types.TxState, error) {
 	return s.unmarshalTxStateBz(txStateBz)
 }
 
+// buildTxStateBz builds and serialized types.TxState object.
 func (s *txStorage) buildTxStateBz(tx *types.Tx, status types.TxStatus, events stateTypes.Events) ([]byte, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("tx: nil")
@@ -106,6 +113,7 @@ func (s *txStorage) buildTxStateBz(tx *types.Tx, status types.TxStatus, events s
 	return txStateBz, nil
 }
 
+// unmarshalTxStateBz deserializes types.TxState object.
 func (s *txStorage) unmarshalTxStateBz(txStateBz []byte) (*types.TxState, error) {
 	var txState types.TxState
 	if _, err := s.codec.Unmarshal(txStateBz, &txState); err != nil {
