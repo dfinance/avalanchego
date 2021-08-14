@@ -144,6 +144,15 @@ func StringifyVMLCSTag(tag *dvm.LcsTag, indentCount ...int) (string, error) {
 	return strBuilder.String(), nil
 }
 
+// StringifyVMStatusMajorCode returns dvm.VMStatus majorCode string representation.
+func StringifyVMStatusMajorCode(majorCode string) string {
+	if v, ok := dvmErrCodes[majorCode]; ok {
+		return v
+	}
+
+	return VMErrUnknown
+}
+
 // processEventType recursively processes event type and returns result event type as a string.
 // If {depth} < 0 we do not charge gas as some nesting levels might be "free".
 func processEventType(gasMeter *GasMeter, tag *dvm.LcsTag, gas, depth uint64) (string, error) {

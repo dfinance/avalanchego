@@ -38,59 +38,6 @@ type (
 	}
 )
 
-type (
-	DeployRequest struct {
-		api.UserPass
-
-		CompiledContent string `json:"compiledContent"`
-	}
-)
-
-type (
-	ExecuteRequest struct {
-		api.UserPass
-
-		CompiledContent string   `json:"compiledContent"`
-		Args            []string `json:"args"`
-	}
-)
-
-type (
-	ImportKeyArgs struct {
-		api.UserPass
-
-		PrivateKey string `json:"privateKey"`
-	}
-)
-
-type (
-	AddressListResponse struct {
-		Addresses []AddressResponse `json:"addresses"`
-	}
-
-	AddressResponse struct {
-		CB58  string `json:"cb58_format"`
-		Local string `json:"local_format"`
-		Hex   string `json:"hex_format"`
-	}
-)
-
-type (
-	GetTxStatusRequest struct {
-		TxID ids.ID `json:"txID"`
-	}
-
-	GetTxStatusResponse struct {
-		TxState *types.TxState `json:"txState"`
-	}
-)
-
-type ExecutionResponse struct {
-	Executed bool              `json:"executed"`
-	Message  string            `json:"message,omitempty"`
-	Events   stateTypes.Events `json:"events,omitempty"`
-}
-
 // Compile compiles Move code and returns byte code with DVM meta.
 func (s *Service) Compile(_ *http.Request, args *CompileRequest, reply *CompileResponse) error {
 	s.vm.Ctx.Log.Debug("MVM: Compile called")
@@ -118,6 +65,12 @@ func (s *Service) Compile(_ *http.Request, args *CompileRequest, reply *CompileR
 	reply.CompiledItems = resp
 
 	return nil
+}
+
+type DeployRequest struct {
+	api.UserPass
+
+	CompiledContent string `json:"compiledContent"`
 }
 
 // Deploy issues contract deploy Tx.
@@ -157,6 +110,13 @@ func (s *Service) Deploy(_ *http.Request, args *DeployRequest, reply *api.JSONTx
 	return nil
 }
 
+type ExecuteRequest struct {
+	api.UserPass
+
+	CompiledContent string   `json:"compiledContent"`
+	Args            []string `json:"args"`
+}
+
 // Execute issues contract execute Tx.
 func (s *Service) Execute(_ *http.Request, args *ExecuteRequest, reply *api.JSONTxID) error {
 	s.vm.Ctx.Log.Debug("MVM: Execute called")
@@ -194,6 +154,59 @@ func (s *Service) Execute(_ *http.Request, args *ExecuteRequest, reply *api.JSON
 	reply.TxID = tx.ID()
 
 	return nil
+}
+
+type (
+	GetDataRequest struct {
+		DVMAddress string `json:"dvmAddress"`
+		DVMPath    string `json:"dvmPath"`
+	}
+
+	GetDataResponse struct {
+		Data []byte `json:"data,omitempty"`
+	}
+)
+
+// GetData returns stored writeSet data.
+func (s *Service) GetData(_ *http.Request, args *GetDataRequest, reply *GetDataResponse) error {
+	s.vm.Ctx.Log.Debug("MVM: Get data")
+	if err := s.checkInitialized(); err != nil {
+		return err
+	}
+
+	parseHexString := func(v string) ([]byte, error) {
+		v = strings.TrimPrefix(v, "0x")
+		bytes, err := hex.DecodeString(v)
+		if err != nil {
+			return nil, fmt.Errorf("parsing HEX string: %w", err)
+		}
+
+		return bytes, nil
+	}
+
+	address, err := parseHexString(args.DVMAddress)
+	if err != nil {
+		return fmt.Errorf("parsing dvmAddress: %v: %w", err, ErrInvalidInput)
+	}
+
+	path, err := parseHexString(args.DVMPath)
+	if err != nil {
+		return fmt.Errorf("parsing dvmPath: %v: %w", err, ErrInvalidInput)
+	}
+
+	data, err := s.vm.state.GetWriteSetData(address, path)
+	if err != nil {
+		return err
+	}
+	reply.Data = data
+
+	return nil
+}
+
+type ImportKeyArgs struct {
+	api.UserPass
+
+	PrivateKey string `json:"privateKey"`
 }
 
 // ImportKey imports user private key, creating address.
@@ -246,6 +259,18 @@ func (s *Service) ImportKey(_ *http.Request, args *ImportKeyArgs, reply *api.JSO
 	return user.Close()
 }
 
+type (
+	AddressListResponse struct {
+		Addresses []AddressResponse `json:"addresses"`
+	}
+
+	AddressResponse struct {
+		CB58  string `json:"cb58_format"`
+		Local string `json:"local_format"`
+		Hex   string `json:"hex_format"`
+	}
+)
+
 // ListAddresses returns addresses controlled by user.
 func (s *Service) ListAddresses(_ *http.Request, args *api.UserPass, reply *AddressListResponse) error {
 	s.vm.Ctx.Log.Debug("MVM: ListAddresses called")
@@ -280,6 +305,16 @@ func (s *Service) ListAddresses(_ *http.Request, args *api.UserPass, reply *Addr
 
 	return user.Close()
 }
+
+type (
+	GetTxStatusRequest struct {
+		TxID ids.ID `json:"txID"`
+	}
+
+	GetTxStatusResponse struct {
+		TxState *types.TxState `json:"txState"`
+	}
+)
 
 // GetTxStatus gets a Tx state.
 func (s *Service) GetTxStatus(_ *http.Request, args *GetTxStatusRequest, reply *GetTxStatusResponse) error {
@@ -323,6 +358,31 @@ func (s *Service) GetTxStatus(_ *http.Request, args *GetTxStatusRequest, reply *
 		}
 	}
 	s.vm.Ctx.Log.Debug("MVM: GetTxStatus: return nil")
+
+	return nil
+}
+
+type GetHeightResponse struct {
+	Height uint64 `json:"height"`
+}
+
+// GetHeight returns the height of the last accepted block
+func (s *Service) GetHeight(_ *http.Request, _ *struct{}, response *GetHeightResponse) error {
+	s.vm.Ctx.Log.Debug("MVM: Get height")
+	if err := s.checkInitialized(); err != nil {
+		return err
+	}
+
+	lastAcceptedBlockID, err := s.vm.LastAccepted()
+	if err != nil {
+		return fmt.Errorf("reading last accepted block ID: %w", err)
+	}
+
+	lastAcceptedBlock, err := s.vm.GetBlock(lastAcceptedBlockID)
+	if err != nil {
+		return fmt.Errorf("reading last accepted block: %w", err)
+	}
+	response.Height = lastAcceptedBlock.Height()
 
 	return nil
 }

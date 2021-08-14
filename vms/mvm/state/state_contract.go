@@ -144,6 +144,26 @@ func (s *State) Compile(msg *types.MsgCompile) (types.CompiledItems, error) {
 	return compItems, nil
 }
 
+// GetWriteSetData gets stored writeSet data.
+func (s *State) GetWriteSetData(address, path []byte) ([]byte, error) {
+	if len(address) != types.DVMAddressLength {
+		return nil, fmt.Errorf("invalid address length (got %d, %d is expected", len(address), types.DVMAddressLength)
+	}
+	if len(path) == 0 {
+		return nil, fmt.Errorf("invalid path length: empty")
+	}
+
+	data, err := s.wsStorage.GetWriteSet(&dvm.VMAccessPath{
+		Address: address,
+		Path:    path,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
 // processDVMExecution processes DVM execution result: updates writeSets.
 func (s *State) processDVMExecution(exec *dvm.VMExecuteResponse) (types.Events, error) {
 	// Build events with infinite (almost) gasMeter

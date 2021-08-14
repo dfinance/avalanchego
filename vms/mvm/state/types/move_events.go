@@ -14,6 +14,7 @@ const (
 
 	AttributeStatus             = "status"
 	AttributeErrMajorStatus     = "major_status"
+	AttributeErrMajorStatusMsg  = "major_status_msg"
 	AttributeErrSubStatus       = "sub_status"
 	AttributeErrMessage         = "message"
 	AttributeErrLocationAddress = "location_address"
@@ -61,6 +62,8 @@ func NewContractEvents(exec *dvm.VMExecuteResponse) (Events, error) {
 		if err != nil {
 			return nil, err
 		}
+		majorStatusStr := strconv.FormatUint(majorStatus, 10)
+		subStatusStr := strconv.FormatUint(subStatus, 10)
 
 		if abortLocation != nil {
 			if abortLocation.GetAddress() != nil {
@@ -75,8 +78,9 @@ func NewContractEvents(exec *dvm.VMExecuteResponse) (Events, error) {
 
 		attributes = append(
 			attributes,
-			NewEventAttribute(AttributeErrMajorStatus, strconv.FormatUint(majorStatus, 10)),
-			NewEventAttribute(AttributeErrSubStatus, strconv.FormatUint(subStatus, 10)),
+			NewEventAttribute(AttributeErrMajorStatus, majorStatusStr),
+			NewEventAttribute(AttributeErrMajorStatusMsg, StringifyVMStatusMajorCode(majorStatusStr)),
+			NewEventAttribute(AttributeErrSubStatus, subStatusStr),
 		)
 
 		if status.GetMessage() != nil {
