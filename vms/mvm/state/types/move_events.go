@@ -11,6 +11,7 @@ import (
 const (
 	EventTypeContractStatus = "contract_status"
 	EventTypeMoveEvent      = "contract_events"
+	EventTypeWriteSetOp     = "write_set_operation"
 
 	AttributeStatus             = "status"
 	AttributeErrMajorStatus     = "major_status"
@@ -23,12 +24,17 @@ const (
 	AttributeVmEventSource      = "source"
 	AttributeVmEventType        = "type"
 	AttributeVmEventData        = "data"
+	AttributeWriteSetOperation  = "operation"
+	AttributeWriteSetAddress    = "address"
+	AttributeWriteSetPath       = "path"
 
 	AttributeValueStatusKeep      = "keep"
 	AttributeValueStatusDiscard   = "discard"
 	AttributeValueStatusError     = "error"
 	AttributeValueSourceScript    = "script"
 	AttributeValueSourceModuleFmt = "%s::%s"
+	AttributeValueWriteSetPut     = "put"
+	AttributeValueWriteSetDelete  = "delete"
 )
 
 // NewContractEvents creates Events on successful / failed VM execution.

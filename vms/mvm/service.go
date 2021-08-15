@@ -320,29 +320,24 @@ type (
 func (s *Service) GetTxStatus(_ *http.Request, args *GetTxStatusRequest, reply *GetTxStatusResponse) error {
 	s.vm.Ctx.Log.Debug("MVM: GetTxStatus called")
 	if err := s.checkInitialized(); err != nil {
-		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: not inited")
 		return err
 	}
 
 	txState, err := s.vm.txStorage.GetTxState(args.TxID)
 	if err != nil {
-		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: %v", err)
 		return err
 	}
 	if txState != nil {
-		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: found")
 		reply.TxState = txState
 		return nil
 	}
 
 	preferredBlockRaw, err := s.vm.GetBlock(s.vm.Preferred())
 	if err != nil {
-		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: %v", err)
 		return fmt.Errorf("reading preferred block: %w", err)
 	}
 	preferredBlock, ok := preferredBlockRaw.(*Block)
 	if !ok {
-		s.vm.Ctx.Log.Debug("MVM: GetTxStatus: not OK")
 		return fmt.Errorf("reading preferred block: invalid type: %T", preferredBlockRaw)
 	}
 
@@ -357,7 +352,6 @@ func (s *Service) GetTxStatus(_ *http.Request, args *GetTxStatusRequest, reply *
 			return nil
 		}
 	}
-	s.vm.Ctx.Log.Debug("MVM: GetTxStatus: return nil")
 
 	return nil
 }

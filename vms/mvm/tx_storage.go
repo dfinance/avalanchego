@@ -7,6 +7,7 @@ import (
 	"github.com/ava-labs/avalanchego/codec"
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/logging"
 	stateTypes "github.com/ava-labs/avalanchego/vms/mvm/state/types"
 	"github.com/ava-labs/avalanchego/vms/mvm/types"
 )
@@ -17,14 +18,16 @@ const (
 
 // txStorage encapsulates transactions storage operation.
 type txStorage struct {
+	log            logging.Logger
 	codec          codec.Manager
 	txsDB          database.Database
 	droppedTxCache cache.Cacher
 }
 
 // newTXStorage creates a new txStorage instance.
-func newTXStorage(codec codec.Manager, db database.Database) *txStorage {
+func newTXStorage(logger logging.Logger, codec codec.Manager, db database.Database) *txStorage {
 	return &txStorage{
+		log:            logger,
 		codec:          codec,
 		txsDB:          db,
 		droppedTxCache: &cache.LRU{Size: txCacheSize},
@@ -42,12 +45,13 @@ func (s *txStorage) Close() error {
 
 // PutCommittedTx puts a new committed transaction to DB.
 func (s *txStorage) PutCommittedTx(tx *types.Tx, events stateTypes.Events) error {
-	txStateBz, err := s.buildTxStateBz(tx, types.TxStatusCommitted, events)
+	txStateBz, err := s.buildTxStateBz(tx, types.TxStatusCommitted, events, nil)
 	if err != nil {
 		return fmt.Errorf("building Tx state: %w", err)
 	}
 	txID := tx.ID()
 
+	s.log.Info("Tx storage: saving committed Tx: %s", tx.ID())
 	if err := s.txsDB.Put(txID[:], txStateBz); err != nil {
 		return fmt.Errorf("storing committed Tx state: %w", err)
 	}
@@ -56,12 +60,13 @@ func (s *txStorage) PutCommittedTx(tx *types.Tx, events stateTypes.Events) error
 }
 
 // PutDroppedTx puts a new dropped transaction to LRU cache.
-func (s *txStorage) PutDroppedTx(tx *types.Tx, events stateTypes.Events) error {
-	txStateBz, err := s.buildTxStateBz(tx, types.TxStatusCommitted, events)
+func (s *txStorage) PutDroppedTx(tx *types.Tx, events stateTypes.Events, err error) error {
+	txStateBz, err := s.buildTxStateBz(tx, types.TxStatusDropped, events, err)
 	if err != nil {
 		return fmt.Errorf("building Tx state: %w", err)
 	}
 
+	s.log.Info("Tx storage: caching dropped Tx: %s", tx.ID())
 	s.droppedTxCache.Put(tx.ID(), txStateBz)
 
 	return nil
@@ -91,7 +96,7 @@ func (s *txStorage) GetTxState(txID ids.ID) (*types.TxState, error) {
 }
 
 // buildTxStateBz builds and serialized types.TxState object.
-func (s *txStorage) buildTxStateBz(tx *types.Tx, status types.TxStatus, events stateTypes.Events) ([]byte, error) {
+func (s *txStorage) buildTxStateBz(tx *types.Tx, status types.TxStatus, events stateTypes.Events, err error) ([]byte, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("tx: nil")
 	}
@@ -100,9 +105,13 @@ func (s *txStorage) buildTxStateBz(tx *types.Tx, status types.TxStatus, events s
 	}
 
 	txState := types.TxState{
-		Tx:       *tx,
-		TxStatus: types.TxStatusCommitted,
-		Events:   events,
+		Tx:         *tx,
+		TxStatus:   status,
+		Events:     events,
+		ErrMessage: "",
+	}
+	if err != nil {
+		txState.ErrMessage = err.Error()
 	}
 
 	txStateBz, err := s.codec.Marshal(types.CodecVersion, &txState)

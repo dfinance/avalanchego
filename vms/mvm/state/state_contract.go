@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -183,9 +184,11 @@ func (s *State) processDVMExecution(exec *dvm.VMExecuteResponse) (types.Events, 
 
 	// Process success status
 	if exec.GetStatus().GetError() == nil {
-		if err := s.processDVMWriteSet(exec.WriteSet); err != nil {
+		wsEvents, err := s.processDVMWriteSet(exec.WriteSet)
+		if err != nil {
 			return events, fmt.Errorf("processing writeSets: %w", err)
 		}
+		events = append(events, wsEvents...)
 
 		return events, nil
 	}
@@ -194,25 +197,40 @@ func (s *State) processDVMExecution(exec *dvm.VMExecuteResponse) (types.Events, 
 }
 
 // processDVMWriteSet processes VM execution writeSets (set/delete).
-func (s *State) processDVMWriteSet(writeSet []*dvm.VMValue) error {
+func (s *State) processDVMWriteSet(writeSet []*dvm.VMValue) (types.Events, error) {
+	var events types.Events
+	addEvent := func(op string, path *dvm.VMAccessPath) {
+		addressAttr := hex.EncodeToString(path.Address)
+		pathAttr := hex.EncodeToString(path.Path)
+
+		events = append(events, types.NewEvent(
+			types.EventTypeWriteSetOp,
+			types.NewEventAttribute(types.AttributeWriteSetOperation, op),
+			types.NewEventAttribute(types.AttributeWriteSetAddress, addressAttr),
+			types.NewEventAttribute(types.AttributeWriteSetPath, pathAttr),
+		))
+	}
+
 	for i, value := range writeSet {
 		if value == nil {
-			return fmt.Errorf("writeSet [%d]: nil value received", i)
+			return nil, fmt.Errorf("writeSet [%d]: nil value received", i)
 		}
 
 		switch value.Type {
 		case dvm.VmWriteOp_Value:
 			if err := s.wsStorage.PutWriteSet(value.Path, value.Value); err != nil {
-				return fmt.Errorf("writeSet [%d]: WriteOp: %w", i, err)
+				return nil, fmt.Errorf("writeSet [%d]: WriteOp: %w", i, err)
 			}
+			addEvent(types.AttributeValueWriteSetPut, value.Path)
 		case dvm.VmWriteOp_Deletion:
 			if err := s.wsStorage.DeleteWriteSet(value.Path); err != nil {
-				return fmt.Errorf("writeSet [%d]: DeleteOp: %w", i, err)
+				return nil, fmt.Errorf("writeSet [%d]: DeleteOp: %w", i, err)
 			}
+			addEvent(types.AttributeValueWriteSetDelete, value.Path)
 		default:
 			panic(fmt.Errorf("processing writeSets: unsupported writeOp.Type: %d", value.Type))
 		}
 	}
 
-	return nil
+	return events, nil
 }

@@ -137,7 +137,7 @@ func (c *dvmClient) retryExecReq(req vmExecRetryReq) (retResp *dvm.VMExecuteResp
 			}
 
 			if curAttempt%failedRetryLogPeriod == 0 {
-				c.log.Info("DVM client: failing VM request: attempt %d / %d with %v timeout: %v", curAttempt, req.maxAttempts, reqTimeout, time.Since(reqStartedAt))
+				c.log.Info("DVM client: failing VM request: attempt %d / %d with %v timeout (startedAt %v): %v", curAttempt, req.maxAttempts, reqTimeout, time.Since(reqStartedAt), err)
 			}
 		}
 	}()

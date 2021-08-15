@@ -71,6 +71,12 @@ func (b *Block) Verify() error {
 	}
 
 	if err := b.commitTxs(); err != nil {
+		if err := b.Reject(); err != nil {
+			err = fmt.Errorf("rejecting block: %w", err)
+			b.vm.Ctx.Log.Error("Block.Verify: %v", err)
+			return err
+		}
+
 		err = fmt.Errorf("commiting Txs: %w", err)
 		b.vm.Ctx.Log.Error("Block.Verify: %v", err)
 		return err
@@ -135,7 +141,7 @@ func (b *Block) commitTxs() error {
 			events, err := b.commitUnsignedMoveTx(utx)
 			b.vm.Ctx.Log.Info("Executing MoveTx (%s): error: %v", txRaw.ID().String(), err)
 			if err != nil {
-				if err := b.vm.txStorage.PutDroppedTx(txRaw, events); err != nil {
+				if err := b.vm.txStorage.PutDroppedTx(txRaw, events, err); err != nil {
 					return fmt.Errorf("tx [%d] (%T): saving dropped Tx: %w", txIdx, utx, err)
 				}
 

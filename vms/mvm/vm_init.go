@@ -86,7 +86,7 @@ func (vm *VM) Initialize(
 	}
 	vm.state = internalState
 
-	vm.txStorage = newTXStorage(vm.codec, prefixdb.New(txsDBPrefix, dbManager.Current().Database))
+	vm.txStorage = newTXStorage(vm.Ctx.Log, vm.codec, prefixdb.New(txsDBPrefix, dbManager.Current().Database))
 
 	if genesisBlockInitialized {
 		ctx.Log.Info("VM.Initialize: creating genesis block")

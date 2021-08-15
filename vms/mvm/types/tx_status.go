@@ -8,9 +8,10 @@ import (
 
 type (
 	TxState struct {
-		Tx       Tx                `serialize:"true" json:"tx"`
-		TxStatus TxStatus          `serialize:"true" json:"status"`
-		Events   stateTypes.Events `serialize:"true" json:"events,omitempty"`
+		Tx         Tx                `serialize:"true" json:"tx"`
+		TxStatus   TxStatus          `serialize:"true" json:"status"`
+		ErrMessage string            `serialize:"true" json:"errorMessage,omitempty"`
+		Events     stateTypes.Events `serialize:"true" json:"events,omitempty"`
 	}
 
 	TxStatus string
